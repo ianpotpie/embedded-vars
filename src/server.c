@@ -11,9 +11,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-int connection_count = 0;
-pthread_mutex_t connection_count_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t connection_slots_available = PTHREAD_COND_INITIALIZER;
+static int connection_count = 0;
+static pthread_mutex_t connection_count_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t connection_slots_available = PTHREAD_COND_INITIALIZER;
 
 /**
  * @brief Creates a TCP listener socket.
@@ -65,11 +65,81 @@ int create_tcp_listener(struct sockaddr *addr, int max_pending_connections) {
   return listener_fd;
 }
 
+typedef void (*command_func_t)(connection_contex_t *context, int argc,
+                               char **argv);
+
+typedef struct {
+  const char *name;
+  const char *desc;
+  command_func_t func;
+} command_t;
+
+void cmd_hello(connection_contex_t *context, int argc, char **argv) {
+  char buffer[256];
+  snprintf(buffer, sizeof(buffer), "Hello, client on FD %d!\n",
+           context->connection_fd);
+  send(context->connection_fd, buffer, strlen(buffer), 0);
+}
+
+void cmd_exit(connection_contex_t *context, int argc, char **argv) {
+  send(context->connection_fd, "Goodbye!\n", 9, 0);
+  context->exit_triggered = true;
+}
+
+void cmd_help(connection_contex_t *context, int argc,
+              char **argv); // Forward declaration
+
+// 3. The Actual Registry (Array)
+command_t registry[] = {{"hello", "Greets the user", cmd_hello},
+                        {"help", "Shows this list", cmd_help},
+                        {"exit", "Quits the REPL", cmd_exit}};
+
+#define CMD_COUNT (sizeof(registry) / sizeof(command_t))
+
+void cmd_help(connection_contex_t *context, int argc, char **argv) {
+  char buffer[512];
+
+  snprintf(buffer, sizeof(buffer), "Available commands:\n");
+  for (size_t i = 0; i < CMD_COUNT; i++) {
+    strncat(buffer, registry[i].name, sizeof(buffer) - strlen(buffer) - 1);
+    strncat(buffer, ": ", sizeof(buffer) - strlen(buffer) - 1);
+    strncat(buffer, registry[i].desc, sizeof(buffer) - strlen(buffer) - 1);
+    strncat(buffer, "\n", sizeof(buffer) - strlen(buffer) - 1);
+  }
+
+  send(context->connection_fd, buffer, strlen(buffer), 0);
+}
+
+void execute_command(connection_contex_t *context, char *line) {
+  // Basic string tokenizer (splits by space)
+  char *argv[10];
+  int argc = 0;
+  char *token = strtok(line, " \n");
+
+  while (token != NULL && argc < 10) {
+    argv[argc++] = token;
+    token = strtok(NULL, " \n");
+  }
+
+  if (argc == 0)
+    return;
+
+  // Search registry
+  for (int i = 0; i < CMD_COUNT; i++) {
+    if (strcmp(argv[0], registry[i].name) == 0) {
+      registry[i].func(context, argc, argv);
+      return;
+    }
+  }
+
+  printf("Unknown command: %s. Type 'help' for info.\n", argv[0]);
+}
+
 void *handle_client_connection(void *arg) {
-  client_info_t client_info = *((client_info_t *)arg);
+  connection_contex_t connection_context = *((connection_contex_t *)arg);
   free(arg);
 
-  int fd = client_info.connection_fd;
+  int fd = connection_context.connection_fd;
   char buffer[1024];
   ssize_t bytes_read;
 
@@ -80,22 +150,22 @@ void *handle_client_connection(void *arg) {
 
     // 1. Null-terminate the received data to treat it as a string
     buffer[bytes_read] = '\0';
-
-    // 2. Echo it back to the client
-    // We use bytes_read to ensure we send exactly what we got
-    send(fd, buffer, bytes_read, 0);
-
-    // 3. (Optional) Log to server console
     printf("[Client %d]: %s", fd, buffer);
+
+    execute_command(&connection_context, buffer);
+
+    if (connection_context.exit_triggered) {
+      break;
+    }
   }
 
-  if (bytes_read == 0) {
+  if (bytes_read == 0 || connection_context.exit_triggered) {
     printf("[Thread] Client on FD %d disconnected.\n", fd);
   } else if (bytes_read == -1) {
     perror("recv failed");
   }
 
-  close(client_info.connection_fd);
+  close(connection_context.connection_fd);
 
   pthread_mutex_lock(&connection_count_mutex);
   connection_count--;
@@ -142,7 +212,7 @@ int start_server(uint32_t ip, uint16_t port, unsigned int max_connections,
       printf("Successfully accepted incoming connection\n");
     }
 
-    client_info_t *client_info = malloc(sizeof(client_info_t));
+    connection_contex_t *client_info = malloc(sizeof(connection_contex_t));
     client_info->connection_fd = new_connection_fd;
     client_info->client_addr = client_addr;
     client_info->client_addrlen = client_addrlen;

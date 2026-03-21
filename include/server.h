@@ -12,6 +12,8 @@ typedef struct {
   int connection_fd;
   struct sockaddr client_addr;
   socklen_t client_addrlen;
-} client_info_t;
+  bool exit_triggered;
+  char path[256];
+} connection_contex_t;
 
 #endif // SERVER_H
