@@ -1,7 +1,6 @@
 #ifndef VAR_H
 #define VAR_H
 
-#include <bits/pthreadtypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -34,11 +33,11 @@ typedef enum {
   VAR_TYPE_COUNT
 } var_type;
 
+// TODO: should have a mutex to synchronize access eventually
 typedef struct {
   var_type type;
   const char *name;
   bool is_persistent;
-  pthread_mutex_t mutex;
   size_t arr_length; // For arrays, 0 for single variables
   union {
     bool *bool_val;

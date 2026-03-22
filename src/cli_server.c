@@ -1,4 +1,5 @@
 #include "../include/cli_server.h"
+#include "../include/var_registry.h"
 #include <asm-generic/errno-base.h>
 #include <asm-generic/errno.h>
 #include <errno.h>
@@ -14,6 +15,8 @@
 #define CONNECTION_READ_BUFFER_SIZE 1024
 #define CONNECTION_WRITE_BUFFER_SIZE 4096
 #define COMMAND_MAX_ARGS 16
+
+#define UNUSED(x) (void)(x)
 
 /**
  * @brief Creates a TCP listener socket.
@@ -75,6 +78,9 @@ typedef struct {
 } command_t;
 
 void cmd_hello(connection_context_t *context, int argc, char **argv) {
+  UNUSED(argc);
+  UNUSED(argv);
+
   char write_buffer[CONNECTION_WRITE_BUFFER_SIZE];
   snprintf(write_buffer, sizeof(write_buffer), "Hello, client on FD %d!\n",
            context->connection_fd);
@@ -82,6 +88,9 @@ void cmd_hello(connection_context_t *context, int argc, char **argv) {
 }
 
 void cmd_exit(connection_context_t *context, int argc, char **argv) {
+  UNUSED(argc);
+  UNUSED(argv);
+
   send(context->connection_fd, "Goodbye!\n", 9, 0);
 
   printf("[Server] Client on FD %d exited.\n", context->connection_fd);
@@ -99,14 +108,74 @@ void cmd_help(connection_context_t *context, int argc,
               char **argv); // Forward declaration since cmd_help is used in the
                             // registry before its definition
 
+void cmd_get(connection_context_t *context, int argc, char **argv) {
+  UNUSED(argc);
+  char write_buffer[CONNECTION_WRITE_BUFFER_SIZE];
+
+  var_t *var = get_registry_entry_by_name(context->registry, argv[1]);
+  if (var == NULL) {
+    snprintf(write_buffer, sizeof(write_buffer), "Variable not found: %s\n",
+             argv[1]);
+    send(context->connection_fd, write_buffer, strlen(write_buffer), 0);
+    return;
+  } else {
+    char value_buf[256];
+    var_value_as_string(var, value_buf, sizeof(value_buf));
+    snprintf(write_buffer, sizeof(write_buffer), "%s: %s\n", var->name,
+             value_buf);
+    send(context->connection_fd, write_buffer, strlen(write_buffer), 0);
+  }
+}
+
+void cmd_set(connection_context_t *context, int argc, char **argv) {
+  UNUSED(context);
+  UNUSED(argc);
+  UNUSED(argv);
+
+  // TODO: Implement setting variable values
+}
+
+void cmd_list(connection_context_t *context, int argc, char **argv) {
+  UNUSED(argc);
+  UNUSED(argv);
+
+  // TODO: implement
+  // for now, just list all variables in the registry
+  var_t *entries = context->registry->entries;
+  size_t count = context->registry->count;
+  char write_buffer[CONNECTION_WRITE_BUFFER_SIZE];
+
+  snprintf(write_buffer, sizeof(write_buffer), "Variables in registry:\n");
+  for (size_t i = 0; i < count; i++) {
+    char value_buf[256];
+    var_value_as_string(&entries[i], value_buf, sizeof(value_buf));
+    strncat(write_buffer, entries[i].name,
+            sizeof(write_buffer) - strlen(write_buffer) - 1);
+    strncat(write_buffer, ": ",
+            sizeof(write_buffer) - strlen(write_buffer) - 1);
+    strncat(write_buffer, value_buf,
+            sizeof(write_buffer) - strlen(write_buffer) - 1);
+    strncat(write_buffer, "\n",
+            sizeof(write_buffer) - strlen(write_buffer) - 1);
+  }
+
+  send(context->connection_fd, write_buffer, strlen(write_buffer), 0);
+}
+
 // 3. The Actual Registry (Array)
-command_t registry[] = {{"hello", "Greets the user", cmd_hello},
-                        {"help", "Shows this list", cmd_help},
-                        {"exit", "Quits the REPL", cmd_exit}};
+command_t registry[] = {
+    {"hello", "Greets the user", cmd_hello},
+    {"help", "Shows this list", cmd_help},
+    {"exit", "Quits the REPL", cmd_exit},
+    {"get", "Gets the value of a variable", cmd_get},
+    {"set", "Sets the value of a variable", cmd_set},
+    {"ls", "List the contents of the current group", cmd_list}};
 
 #define CMD_COUNT (sizeof(registry) / sizeof(command_t))
 
 void cmd_help(connection_context_t *context, int argc, char **argv) {
+  UNUSED(argc);
+  UNUSED(argv);
   char write_buffer[CONNECTION_WRITE_BUFFER_SIZE];
 
   snprintf(write_buffer, sizeof(write_buffer), "Available commands:\n");
@@ -189,7 +258,7 @@ void *handle_connection(void *arg) {
 }
 
 void *handle_listener(void *arg) {
-  listener_context_t args = *((listener_context_t *)arg);
+  listener_context_t context = *((listener_context_t *)arg);
   free(arg);
 
   int connection_count = 0;
@@ -198,7 +267,7 @@ void *handle_listener(void *arg) {
 
   while (true) {
     pthread_mutex_lock(&connection_count_mutex);
-    while (connection_count >= args.max_connections) {
+    while (connection_count >= context.max_connections) {
       printf("Maximum number of connections reached. Waiting for a connection "
              "to close...\n");
       pthread_cond_wait(&connection_available_cond, &connection_count_mutex);
@@ -206,7 +275,8 @@ void *handle_listener(void *arg) {
 
     struct sockaddr client_addr;
     socklen_t client_addrlen = sizeof(client_addr);
-    int connection_fd = accept(args.listener_fd, &client_addr, &client_addrlen);
+    int connection_fd =
+        accept(context.listener_fd, &client_addr, &client_addrlen);
 
     connection_count++;
     pthread_mutex_unlock(&connection_count_mutex);
@@ -219,23 +289,26 @@ void *handle_listener(void *arg) {
       printf("Successfully accepted incoming connection\n");
     }
 
-    connection_context_t *context = malloc(sizeof(connection_context_t));
-    context->connection_fd = connection_fd;
-    context->client_addr = client_addr;
-    context->client_addrlen = client_addrlen;
-    context->connection_count = &connection_count;
-    context->connection_count_mutex = &connection_count_mutex;
-    context->connection_available_cond = &connection_available_cond;
+    connection_context_t *connection_context =
+        malloc(sizeof(connection_context_t));
+    connection_context->connection_fd = connection_fd;
+    connection_context->client_addr = client_addr;
+    connection_context->client_addrlen = client_addrlen;
+    connection_context->connection_count = &connection_count;
+    connection_context->connection_count_mutex = &connection_count_mutex;
+    connection_context->connection_available_cond = &connection_available_cond;
+    connection_context->registry = context.registry;
 
     pthread_t thread_id;
-    pthread_create(&thread_id, NULL, handle_connection, context);
+    pthread_create(&thread_id, NULL, handle_connection, connection_context);
     pthread_detach(thread_id);
   }
 }
 
-int start_cli_server(pthread_t *thread_id, uint32_t ip, uint16_t port,
-                     unsigned int max_connections,
+int start_cli_server(var_registry_t *registry, pthread_t *thread_id,
+                     uint32_t ip, uint16_t port, unsigned int max_connections,
                      unsigned int max_pending_connections) {
+
   struct sockaddr_in server_addr;
   memset(&server_addr, 0, sizeof(server_addr));
   server_addr.sin_family = AF_INET;
@@ -248,6 +321,7 @@ int start_cli_server(pthread_t *thread_id, uint32_t ip, uint16_t port,
   listener_context_t *context = malloc(sizeof(listener_context_t));
   context->listener_fd = listener_fd;
   context->max_connections = max_connections;
+  context->registry = registry;
 
   pthread_create(thread_id, NULL, handle_listener, context);
 

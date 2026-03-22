@@ -1,14 +1,14 @@
 #ifndef CLI_SERVER_H
 #define CLI_SERVER_H
 
+#include "var_registry.h"
 #include <netinet/in.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/socket.h>
 
-int start_cli_server(pthread_t *thread_id, uint32_t ip, uint16_t port,
-                     unsigned int max_connections,
+int start_cli_server(var_registry_t *registry, pthread_t *thread_id,
+                     uint32_t ip, uint16_t port, unsigned int max_connections,
                      unsigned int max_pending_connections);
 
 typedef struct {
@@ -18,11 +18,13 @@ typedef struct {
   int *connection_count;
   pthread_mutex_t *connection_count_mutex;
   pthread_cond_t *connection_available_cond;
+  var_registry_t *registry;
 } connection_context_t;
 
 typedef struct {
   int listener_fd;
   int max_connections;
+  var_registry_t *registry;
 } listener_context_t;
 
 #endif // CLI_SERVER_H

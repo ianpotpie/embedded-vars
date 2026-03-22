@@ -55,7 +55,6 @@ var_t create_var(var_type type, char *name, bool is_persistent) {
   var_t var = {.type = type,
                .name = name,
                .is_persistent = is_persistent,
-               .mutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER,
                .arr_length = 0};
   return var;
 }
@@ -232,31 +231,31 @@ int register_float_arr(var_registry_t *registry, char *name, bool is_persistent,
   return register_var(registry, var);
 }
 
-int register_double_arr(char *name, bool is_persistent, double **arr,
-                        size_t arr_length) {
+int register_double_arr(var_registry_t *registry, char *name,
+                        bool is_persistent, double **arr, size_t arr_length) {
   var_t var = create_var(VAR_TYPE_DOUBLE_ARR, name, is_persistent);
   var.value.double_arr = arr;
   var.arr_length = arr_length;
   return register_var(registry, var);
 }
 
-var_t *get_storage_item_by_path(char *name) {
-  if (global_registry->count == 0) {
+var_t *get_registry_entry_by_name(var_registry_t *registry, char *name) {
+  if (registry->count == 0) {
     return NULL; // No items in the registry
   }
 
   // Perform a binary search since the items are sorted by path
   size_t left = 0;
-  size_t right = global_registry->count;
+  size_t right = registry->count - 1;
 
   while (left <= right) {
 
     size_t mid = left + (right - left) / 2;
-    const char *mid_path = global_registry->items[mid].path;
+    const char *mid_name = registry->entries[mid].name;
 
-    int cmp = strcmp(mid_path, path);
+    int cmp = strcmp(mid_name, name);
     if (cmp == 0) {
-      return &global_registry->items[mid]; // Found the item
+      return &registry->entries[mid]; // Found the item
     } else if (cmp < 0) {
       left = mid + 1; // Search in the right half
     } else {
@@ -267,9 +266,9 @@ var_t *get_storage_item_by_path(char *name) {
   return NULL; // Item not found
 }
 
-var_t *get_storage_item_by_index(size_t index) {
-  if (index >= global_registry->count) {
+var_t *get_registry_entry_by_index(var_registry_t *registry, size_t index) {
+  if (index >= registry->count) {
     return NULL; // Index out of bounds
   }
-  return &global_registry->items[index];
+  return &registry->entries[index];
 }

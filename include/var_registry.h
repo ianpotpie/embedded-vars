@@ -2,7 +2,6 @@
 #define VAR_REGISTRY_H
 
 #include "var.h"
-#include <bits/pthreadtypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -19,6 +18,7 @@ void init_registry(var_registry_t *registry, char *save_path, var_t *entries,
 void save_registry(var_registry_t *registry);
 void load_persistents(var_registry_t *registry);
 
+// TODO: these should populate a pointer instead of returning
 var_t *get_registry_entry_by_name(var_registry_t *registry, char *name);
 var_t *get_registry_entry_by_index(var_registry_t *registry, size_t index);
 
