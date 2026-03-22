@@ -19,6 +19,7 @@ typedef struct {
   pthread_mutex_t *connection_count_mutex;
   pthread_cond_t *connection_available_cond;
   var_registry_t *registry;
+  char *cwd;
 } connection_context_t;
 
 typedef struct {

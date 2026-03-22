@@ -16,6 +16,8 @@
 #define CONNECTION_WRITE_BUFFER_SIZE 4096
 #define COMMAND_MAX_ARGS 16
 
+// TODO: define a path_buffer_size used for registry_variables and here
+
 #define UNUSED(x) (void)(x)
 
 /**
@@ -162,6 +164,61 @@ void cmd_list(connection_context_t *context, int argc, char **argv) {
   send(context->connection_fd, write_buffer, strlen(write_buffer), 0);
 }
 
+void cmd_cd(connection_context_t *context, int argc, char **argv) {
+  if (argc < 2 || argv[1] == NULL)
+    return;
+
+  char new_cwd[256];
+  char *path_ptr =
+      argv[1]; // Use a pointer so we don't lose the start of argv[1]
+
+  // 1. Initialize the starting point
+  if (path_ptr[0] == '/') {
+    snprintf(new_cwd, sizeof(new_cwd), "/");
+  } else {
+    snprintf(new_cwd, sizeof(new_cwd), "%s", context->cwd);
+  }
+
+  // 2. Tokenize and step through the path
+  char *token;
+  while ((token = strsep(&path_ptr, "/")) != NULL) {
+    // Skip empty tokens (from //) or "." (current dir)
+    if (*token == '\0' || strcmp(token, ".") == 0) {
+      continue;
+    }
+
+    if (strcmp(token, "..") == 0) {
+      // Find the last slash to move up
+      char *last_slash = strrchr(new_cwd, '/');
+      if (last_slash != NULL) {
+        if (last_slash == new_cwd) {
+          // We are at root, keep the leading slash
+          new_cwd[1] = '\0';
+        } else {
+          // Erase the last component
+          *last_slash = '\0';
+        }
+      }
+    } else {
+      // Append a slash unless we are at root "/"
+      size_t len = strlen(new_cwd);
+      if (len > 1 || (len == 1 && new_cwd[0] != '/')) {
+        strncat(new_cwd, "/", sizeof(new_cwd) - strlen(new_cwd) - 1);
+      } else if (len == 0) {
+        // Should not happen with current logic, but safe-guard
+        new_cwd[0] = '/';
+        new_cwd[1] = '\0';
+      }
+
+      strncat(new_cwd, token, sizeof(new_cwd) - strlen(new_cwd) - 1);
+    }
+  }
+
+  // 3. Update the context
+  strncpy(context->cwd, new_cwd, 256);
+  context->cwd[255] = '\0'; // Ensure null-termination
+}
+
 // 3. The Actual Registry (Array)
 command_t registry[] = {
     {"hello", "Greets the user", cmd_hello},
@@ -169,10 +226,24 @@ command_t registry[] = {
     {"exit", "Quits the REPL", cmd_exit},
     {"get", "Gets the value of a variable", cmd_get},
     {"set", "Sets the value of a variable", cmd_set},
-    {"ls", "List the contents of the current group", cmd_list}};
+    {"ls", "List the contents of the current directory", cmd_list},
+    {"cd", "Change the current directory", cmd_cd},
+};
 
 #define CMD_COUNT (sizeof(registry) / sizeof(command_t))
 
+/**
+ * @brief Command handler for the "help" command.
+ *
+ * Sends a list of available commands and their descriptions to the client.
+ * @param context Pointer to the connection context containing the client
+ * information and registry.
+ * @param argc The number of arguments passed to the command (not used).
+ * @param argv The array of argument strings passed to the command (not used).
+ *
+ * Note: This function uses the global `registry` array to access the list of
+ * commands and their descriptions.
+ */
 void cmd_help(connection_context_t *context, int argc, char **argv) {
   UNUSED(argc);
   UNUSED(argv);
@@ -227,9 +298,14 @@ void *handle_connection(void *arg) {
 
   int fd = context.connection_fd;
   char read_buffer[CONNECTION_READ_BUFFER_SIZE];
+  char cwd_buffer[256] = "/";
+  context.cwd = cwd_buffer;
   ssize_t bytes_read;
 
   printf("[Server] Handling new connection on FD %d\n", fd);
+
+  send(fd, cwd_buffer, strlen(cwd_buffer), 0);
+  send(fd, "> ", 2, 0); // Send prompt after each command execution
 
   // Loop until the client closes the connection or an error occurs
   while ((bytes_read = recv(fd, read_buffer, sizeof(read_buffer) - 1, 0)) > 0) {
@@ -239,6 +315,8 @@ void *handle_connection(void *arg) {
     printf("[Client %d]: %s", fd, read_buffer);
 
     execute_command(&context, read_buffer);
+    send(fd, cwd_buffer, strlen(cwd_buffer), 0);
+    send(fd, "> ", 2, 0); // Send prompt after each command execution
   }
 
   if (bytes_read == 0) {
