@@ -1,11 +1,8 @@
-#include "../include/server.h"
-#include <errno.h>
+#include "../include/cli_server.h"
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/socket.h>
 
 int main(int argc, char *argv[]) {
@@ -14,7 +11,10 @@ int main(int argc, char *argv[]) {
   const unsigned int max_connections = 5;
   const unsigned int max_pending_connections = 2;
 
-  start_server(ip, port, max_connections, max_pending_connections);
+  pthread_t cli_thread_id;
+  start_cli_server(&cli_thread_id, ip, port, max_connections,
+                   max_pending_connections);
+  pthread_join(cli_thread_id, NULL);
 
   return EXIT_SUCCESS;
 }
