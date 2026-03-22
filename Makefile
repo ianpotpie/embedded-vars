@@ -3,12 +3,14 @@ CC      = gcc
 CFLAGS  = -Wall -Wextra -D_GNU_SOURCE -pthread -Iinclude
 LDFLAGS = -pthread
 
-# Target binary name
-TARGET  = my_project
-
 # Directories
 SRC_DIR = src
 OBJ_DIR = obj
+BIN_DIR = bin
+
+# Target binary
+TARGET_NAME = server 
+TARGET      = $(BIN_DIR)/$(TARGET_NAME)
 
 # Find all .c files in the src directory
 SRCS    = $(wildcard $(SRC_DIR)/*.c)
@@ -20,20 +22,24 @@ OBJS    = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
 all: $(TARGET)
 
 # Link the object files to create the executable
-$(TARGET): $(OBJS)
+# The '| $(BIN_DIR)' ensures the bin folder exists before linking
+$(TARGET): $(OBJS) | $(BIN_DIR)
 	$(CC) $(OBJS) -o $(TARGET) $(LDFLAGS)
 
 # Compile each .c file into an .o file inside the obj/ directory
-# The '| $(OBJ_DIR)' ensures the directory exists before compiling
+# The '| $(OBJ_DIR)' ensures the obj folder exists before compiling
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Create the object directory if it doesn't exist
+# Directory creation rules
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
-# Clean up build files and the object directory
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+# Clean up build files and directories
 clean:
-	rm -rf $(OBJ_DIR) $(TARGET)
+	rm -rf $(OBJ_DIR) $(BIN_DIR)
 
 .PHONY: all clean
